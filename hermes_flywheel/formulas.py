@@ -25,7 +25,7 @@ def _find_formula(
     name: str,
     project_root: str | None = None,
 ) -> Path | None:
-    """Search for a formula file by name in project and user dirs."""
+    """Search for a formula file by name in project, user dirs, and built-ins."""
     candidates = [
         Path(project_root) / ".beads" / "formulas" / f"{name}.formula.toml"
         if project_root
@@ -35,6 +35,9 @@ def _find_formula(
     for path in candidates:
         if path.exists():
             return path
+    # Check built-in formulas (in-memory, not on disk)
+    if name in BUILTIN_FORMULAS:
+        return None  # Signal: use built-in, not file
     return None
 
 
@@ -98,10 +101,15 @@ def formula_pour(
 
     # Load formula
     path = _find_formula(formula_name, project_root)
-    if not path:
-        return {"error": f"Formula '{formula_name}' not found. Create it at .beads/formulas/{formula_name}.formula.toml"}
-
-    formula = _load_formula(path)
+    if path is None and formula_name not in BUILTIN_FORMULAS:
+        return {"error": f"Formula '{formula_name}' not found. Install with formula_install('{formula_name}') or create .beads/formulas/{formula_name}.formula.toml"}
+    
+    if path:
+        formula = _load_formula(path)
+    else:
+        # Built-in formula — load from TOML string
+        import tomllib
+        formula = tomllib.loads(BUILTIN_FORMULAS[formula_name])
 
     # Validate vars
     errors = _validate_vars(formula, vars)
@@ -262,6 +270,25 @@ def formula_list(project_root: str | None = None) -> dict[str, Any]:
                     "location": str(fpath),
                 })
 
+    # Add built-in formulas not yet on disk
+    import tomllib
+    for name, raw in BUILTIN_FORMULAS.items():
+        if name in seen:
+            continue
+        seen.add(name)
+        try:
+            formula = tomllib.loads(raw)
+            formulas.append({
+                "name": name,
+                "title": formula.get("formula", name),
+                "description": formula.get("description", ""),
+                "type": formula.get("type", "workflow"),
+                "step_count": len(formula.get("steps", [])),
+                "location": "(built-in — install with formula_install to customize)",
+            })
+        except Exception:
+            pass
+
     return {"count": len(formulas), "formulas": formulas}
 
 
@@ -391,7 +418,6 @@ priority = 0
 [vars.version]
 description = "Release version number"
 required = true
-pattern = "^\\d+\\.\\d+\\.\\d+$"
 
 [[steps]]
 id = "bump-version"
