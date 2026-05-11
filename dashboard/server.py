@@ -114,6 +114,14 @@ td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
 .refresh { color: var(--text-muted); font-size: 12px; }
 .spark { display: inline-block; width: 8px; height: 8px; border-radius: 50%; animation: pulse 2s infinite; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+.graph-container { position: relative; overflow: auto; padding-bottom: 20px; }
+.graph-svg { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 1; }
+.gnode { position: absolute; width: 210px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; cursor: default; z-index: 2; font-size: 12px; transition: border-color 0.2s; }
+.gnode:hover { border-color: var(--accent); z-index: 3; }
+.gnode-id { color: var(--text-muted); font-family: 'SF Mono', 'Fira Code', monospace; font-size: 10px; margin-bottom: 3px; }
+.gnode-title { color: var(--text); font-weight: 600; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gnode-meta { display: flex; gap: 6px; align-items: center; font-size: 11px; }
+.gnode-claimed { color: var(--blue); font-size: 10px; margin-left: auto; }
 </style>
 </head>
 <body>
@@ -125,7 +133,7 @@ td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
 </header>
 <div class="tabs">
   <div class="tab active" onclick="switchTab('table')">📋 Table</div>
-  <div class="tab" onclick="switchTab('tree')">🌳 Dependency Tree</div>
+  <div class="tab" onclick="switchTab('tree')">🔗 Dependency Graph</div>
   <div class="tab" onclick="switchTab('debug')">🔧 Debug</div>
   <div class="refresh" style="margin-left:auto;padding-top:8px;">↻ <span id="countdown">5</span>s</div>
 </div>
@@ -146,7 +154,7 @@ async function fetchData() {
   document.getElementById('project').textContent = d.project || '';
   renderStats(d.stats);
   renderTable();
-  renderTree();
+  renderGraph();
   renderDebug();
   countdown = REFRESH;
 }
@@ -186,34 +194,126 @@ function renderTable() {
   document.getElementById('table').innerHTML = data.length ? html : '<p style="padding:40px;text-align:center;color:var(--text-muted)">No beads yet. Pour a formula or create one!</p>';
 }
 
-function renderTree() {
-  // Find roots (beads with no unsatisfied deps, or no deps at all)
+function renderGraph() {
+  // Build children map: who depends on me?
   const idSet = new Set(data.map(b=>b.id));
+  const children = {};
+  for (const b of data) children[b.id] = [];
+  for (const b of data) {
+    for (const dep of (b.dependencies||[])) {
+      if (idSet.has(dep)) children[dep].push(b.id);
+    }
+  }
+
+  // Topological sort with longest-path layering
   const inDeg = {};
   for (const b of data) inDeg[b.id] = 0;
-  for (const b of data) for (const d of (b.dependencies||[])) if (idSet.has(d)) inDeg[b.id] = (inDeg[b.id]||0)+1;
-  const roots = data.filter(b => (inDeg[b.id]||0) === 0);
-
-  function renderNode(id, depth) {
-    const b = data.find(x=>x.id===id);
-    if (!b) return '';
-    const indent = '&nbsp;&nbsp;'.repeat(depth);
-    const color = {'open':'#6b7280','in_progress':'#3b82f6','blocked':'#ef4444','closed':'#3fb950','deferred':'#f59e0b'}[b.status]||'#6b7280';
-    const claimed = b.metadata?.claimed_by ? ` <span class="tree-claimed">🐙 ${b.metadata.claimed_by}</span>` : '';
-    let html = `<div class="tree-node">${indent}<span class="tree-status" style="background:${color}"></span><span class="tree-id">${b.id}</span> <span class="badge badge-${b.status}">${b.status}</span> ${esc(b.title)}${claimed}</div>`;
-    const children = (depsMap[id]||[]);
-    for (const childId of children) {
-      html += renderNode(childId, depth+1);
+  for (const b of data) {
+    for (const dep of (b.dependencies||[])) {
+      if (idSet.has(dep)) inDeg[b.id]++;
     }
-    return html;
   }
 
-  let html = '<div class="tree">';
-  for (const root of roots) {
-    html += renderNode(root.id, 0);
+  const layer = {};
+  const q = [];
+  for (const b of data) {
+    if (inDeg[b.id] === 0) {
+      layer[b.id] = 0;
+      q.push(b.id);
+    }
   }
-  html += '</div>';
-  document.getElementById('tree').innerHTML = html;
+
+  while (q.length > 0) {
+    const id = q.shift();
+    for (const childId of (children[id]||[])) {
+      layer[childId] = Math.max(layer[childId]||0, layer[id] + 1);
+      inDeg[childId]--;
+      if (inDeg[childId] === 0) q.push(childId);
+    }
+  }
+
+  // Handle cycles / disconnected: assign layer 0
+  for (const b of data) {
+    if (layer[b.id] === undefined) layer[b.id] = 0;
+  }
+
+  // Group by layer
+  const layers = {};
+  let maxLayer = 0;
+  for (const b of data) {
+    const l = layer[b.id];
+    if (!layers[l]) layers[l] = [];
+    layers[l].push(b);
+    if (l > maxLayer) maxLayer = l;
+  }
+
+  const NODE_W = 210;
+  const NODE_H = 68;
+  const LAYER_GAP = 260;
+  const NODE_GAP = 14;
+  const PAD = 20;
+
+  const maxNodesInLayer = Math.max(...Object.values(layers).map(arr=>arr.length), 1);
+  const totalH = maxNodesInLayer * (NODE_H + NODE_GAP) + PAD * 2;
+  const totalW = (maxLayer + 1) * LAYER_GAP + NODE_W + PAD;
+
+  // Calculate positions: center nodes vertically within each layer
+  const positions = {};
+  for (let l = 0; l <= maxLayer; l++) {
+    const nodes = layers[l] || [];
+    const layerH = nodes.length * (NODE_H + NODE_GAP);
+    const startY = PAD + (totalH - layerH) / 2;
+    nodes.forEach((b, i) => {
+      positions[b.id] = {
+        x: PAD + l * LAYER_GAP,
+        y: startY + i * (NODE_H + NODE_GAP),
+      };
+    });
+  }
+
+  // SVG arrows with bezier curves
+  let svgArrows = '';
+  const colors = {'open':'#6b7280','in_progress':'#3b82f6','blocked':'#ef4444','closed':'#3fb950','deferred':'#f59e0b'};
+
+  for (const b of data) {
+    const from = positions[b.id];
+    if (!from) continue;
+    for (const childId of (children[b.id]||[])) {
+      const to = positions[childId];
+      if (!to) continue;
+      const x1 = from.x + NODE_W;
+      const y1 = from.y + NODE_H / 2;
+      const x2 = to.x;
+      const y2 = to.y + NODE_H / 2;
+      const midX = (x1 + x2) / 2;
+      const edgeColor = colors[b.status] || '#6b7280';
+      svgArrows += `<path d="M${x1},${y1} C${midX},${y1} ${midX},${y2} ${x2},${y2}" stroke="${edgeColor}" stroke-width="1.5" fill="none" opacity="0.5" marker-end="url(#arrowhead)"/>`;
+    }
+  }
+
+  // HTML nodes
+  let nodesHtml = '';
+  for (const b of data) {
+    const pos = positions[b.id];
+    if (!pos) continue;
+    const color = colors[b.status] || '#6b7280';
+    const prioLabel = ['CRIT','HIGH','MED','LOW','BACK'][b.priority]||'MED';
+    const claimed = b.metadata?.claimed_by ? `<span class="gnode-claimed">🐙 ${esc(b.metadata.claimed_by)}</span>` : '';
+    nodesHtml += `<div class="gnode" style="left:${pos.x}px;top:${pos.y}px;border-left:4px solid ${color}">
+      <div class="gnode-id">${esc(b.id.substring(0,14))}</div>
+      <div class="gnode-title" title="${esc(b.title)}">${esc(b.title)}</div>
+      <div class="gnode-meta"><span class="badge badge-${b.status}">${b.status}</span> <span class="badge ${b.priority===0?'badge-crit':b.priority===1?'badge-high':''}">${prioLabel}</span>${claimed}</div>
+    </div>`;
+  }
+
+  const emptyState = data.length ? '' : '<p style="padding:40px;text-align:center;color:var(--text-muted)">No beads yet. Pour a formula or create one!</p>';
+  document.getElementById('tree').innerHTML = emptyState || `<div class="graph-container" style="height:${totalH}px;min-width:${totalW}px">
+    <svg class="graph-svg" style="width:${totalW}px;height:${totalH}px" viewBox="0 0 ${totalW} ${totalH}">
+      <defs><marker id="arrowhead" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto"><polygon points="0 0, 7 2.5, 0 5" fill="#484f58"/></marker></defs>
+      ${svgArrows}
+    </svg>
+    ${nodesHtml}
+  </div>`;
 }
 
 function renderDebug() {
