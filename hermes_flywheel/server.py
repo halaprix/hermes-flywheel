@@ -289,9 +289,34 @@ def formula_install(name: str) -> dict:
     return _formulas.formula_install_builtin(name=name, project_root=PROJECT_ROOT)
 
 
+DASHBOARD_PORT = int(os.environ.get("FLYWHEEL_DASHBOARD_PORT", "0"))
+
+
 # ═══════════════════════════════════════════════════════════════════════
 # Entry Point
 # ═══════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
+    if DASHBOARD_PORT > 0:
+        import threading
+        from http.server import HTTPServer
+
+        # Add dashboard dir to path
+        import sys as _sys
+        _dashboard_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "dashboard"
+        )
+        _sys.path.insert(0, _dashboard_dir)
+
+        from server import Handler as DashHandler  # type: ignore[import-not-found]
+
+        def _start_dashboard():
+            httpd = HTTPServer(("127.0.0.1", DASHBOARD_PORT), DashHandler)
+            print(f"🌀 Dashboard → http://127.0.0.1:{DASHBOARD_PORT}")
+            httpd.serve_forever()
+
+        t = threading.Thread(target=_start_dashboard, daemon=True)
+        t.start()
+
     mcp.run()
