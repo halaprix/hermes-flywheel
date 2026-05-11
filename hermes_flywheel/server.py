@@ -34,13 +34,15 @@ mcp = FastMCP("Hermes Flywheel")
 PROJECT_ROOT = os.environ.get("FLYWHEEL_PROJECT_ROOT", os.getcwd())
 
 
-# ── Import storage and graph (relative or absolute) ────────────────────
+# ── Import storage, graph, and formulas ────────────────────────────────
 try:
     from . import graph as _graph
     from . import storage as _store
+    from . import formulas as _formulas
 except ImportError:
     import graph as _graph  # type: ignore[no-redef]
     import storage as _store  # type: ignore[no-redef]
+    import formulas as _formulas  # type: ignore[no-redef]
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -239,6 +241,52 @@ def flywheel_land(bead_id: str | None = None) -> dict:
 def flywheel_stats() -> dict:
     """Return summary statistics for the current flywheel project."""
     return _store.beads_stats(project_root=PROJECT_ROOT)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Formulas — Reusable Workflow Templates
+# ═══════════════════════════════════════════════════════════════════════
+
+@mcp.tool()
+def formula_pour(
+    formula_name: str,
+    vars: dict | None = None,
+    dry_run: bool = False,
+) -> dict:
+    """Pour a formula into a molecule — creates parent + child beads.
+
+    Formulas are TOML workflow templates. Pouring expands them into a hierarchy
+    of beads with dependencies. Built-in formulas: feature, bugfix, refactor, release.
+
+    Example: formula_pour('feature', {'feature_name': 'dark mode'})
+    Preview: formula_pour('feature', {'feature_name': 'dark mode'}, dry_run=True)
+    """
+    return _formulas.formula_pour(
+        formula_name=formula_name,
+        vars=vars,
+        project_root=PROJECT_ROOT,
+        dry_run=dry_run,
+    )
+
+
+@mcp.tool()
+def formula_list() -> dict:
+    """List available formulas (project, user, and built-in).
+
+    Returns formula names, descriptions, step counts, and locations.
+    Use formula_install to add a built-in formula to your project.
+    """
+    return _formulas.formula_list(project_root=PROJECT_ROOT)
+
+
+@mcp.tool()
+def formula_install(name: str) -> dict:
+    """Install a built-in formula into the project's .beads/formulas/ directory.
+
+    Built-in formulas: feature, bugfix, refactor, release.
+    After installing, use formula_pour to create molecules.
+    """
+    return _formulas.formula_install_builtin(name=name, project_root=PROJECT_ROOT)
 
 
 # ═══════════════════════════════════════════════════════════════════════

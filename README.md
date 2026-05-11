@@ -1,155 +1,163 @@
 # Hermes Flywheel
 
-A beads task-graph MCP server for [Hermes Agent](https://github.com/NousResearch/hermes-agent). Reverse-engineered from Jeff Emanuel's [Agentic Coding Flywheel](https://agent-flywheel.com/) methodology — the same system that shipped 20,000+ lines of production Go in a single day with coordinated AI swarms.
+<p align="center">
+  <pre>
+   ██╗  ██╗███████╗██████╗ ███╗   ███╗███████╗███████╗    ███████╗██╗  ██╗   ██╗██╗    ██╗██████╗ ██╗  ██╗███████╗███████╗██╗
+   ██║  ██║██╔════╝██╔══██╗████╗ ████║██╔════╝██╔════╝    ██╔════╝██║  ╚██╗ ██╔╝██║    ██║██╔══██╗██║  ██║██╔════╝██╔════╝██║
+   ███████║█████╗  ██████╔╝██╔████╔██║█████╗  ███████╗    █████╗  ██║   ╚████╔╝ ██║ █╗ ██║██████╔╝███████║█████╗  █████╗  ██║
+   ██╔══██║██╔══╝  ██╔══██╗██║╚██╔╝██║██╔══╝  ╚════██║    ██╔══╝  ██║    ╚██╔╝  ██║███╗██║██╔══██╗██╔══██║██╔══╝  ██╔══╝  ╚═╝
+   ██║  ██║███████╗██║  ██║██║ ╚═╝ ██║███████╗███████║    ██║     ███████╗██║   ╚███╔███╔╝██║  ██║██║  ██║███████╗███████╗██╗
+   ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚══════╝    ╚═╝     ╚══════╝╚═╝    ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝╚═╝
+  </pre>
+  <em>A beads task-graph MCP server for <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a></em>
+</p>
 
-This is a **lightweight reimplementation** for people who want the flywheel workflow without renting a 64GB VPS. No Dolt, no SQLite, no daemons. Just Python stdlib and a JSONL file.
+<p align="center">
+  <img src="https://img.shields.io/badge/python-3.11+-blue" alt="Python">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
+  <img src="https://img.shields.io/badge/hermes-agent-mcp-purple" alt="Hermes MCP">
+</p>
 
-## What it does
+---
 
-Tracks work as **beads** — self-contained tasks with dependencies — in a flat JSONL file. A graph engine runs PageRank, critical path, and betweenness centrality on the dependency DAG so agents know which bead to work on next. No more agents guessing what matters.
+Plan-first, bead-driven development for Hermes Agent. Reverse-engineered from Jeff Emanuel's [Agentic Coding Flywheel](https://agent-flywheel.com/) — the same methodology that shipped 20,000+ lines of production Go in a single day with coordinated AI swarms.
 
-The core loop:
+Tracks work as **beads** (self-contained tasks with dependency graphs) in a flat JSONL file. A pure-Python graph engine runs PageRank, critical path, and betweenness centrality so agents know exactly which bead to work on next. No Dolt, no SQLite, no daemons. No VPS required.
 
 ```
 Plan → Beads → Triage → Execute → Land → Repeat
 ```
 
-Each turn through the loop feeds the next one. Completed sessions produce memory. Memory makes future planning faster. Tools improve because agents use them, complain about them, then help improve them.
+## Why a flywheel?
 
-## Why not just use a TODO list?
-
-Because flat lists don't know what blocks what. A bead graph tells you:
+Because flat TODO lists don't know what blocks what. A bead graph tells you:
 
 - **Which task unblocks the most downstream work** (PageRank)
-- **The longest dependency chain** determining minimum project time (critical path)
-- **Where your bottleneck is** (betweenness centrality)
-- **What you can work on right now** without stepping on anyone else's work
+- **The longest dependency chain** determining project minimum time (critical path)
+- **Where your bottleneck sits** (betweenness centrality)
+- **What you can safely work on** right now without stepping on anyone's toes
 
-An agent working from a flat list picks whatever looks interesting. An agent working from a bead graph picks the mathematically optimal next step.
+An agent with a flat list picks whatever looks interesting. An agent with a bead graph picks the mathematically optimal next step.
 
 ## Install
 
+### Quick (uvx — zero install)
+
 ```bash
-git clone https://github.com/halaprix/hermes-flywheel.git ~/.hermes/mcp_servers/hermes-flywheel
+uvx hermes-flywheel
 ```
+
+### From source
+
+```bash
+git clone https://github.com/halaprix/hermes-flywheel.git
+cd hermes-flywheel
+pip install .
+```
+
+### Docker
+
+```bash
+docker run -v $(pwd):/workspace -e FLYWHEEL_PROJECT_ROOT=/workspace ghcr.io/halaprix/hermes-flywheel
+```
+
+## Wire into Hermes
 
 Add to `~/.hermes/config.yaml`:
 
 ```yaml
 mcp_servers:
   flywheel:
-    command: "python"
-    args: ["-m", "hermes_flywheel.server"]
+    command: uvx
+    args: ["hermes-flywheel"]
     env:
-      FLYWHEEL_PROJECT_ROOT: "/path/to/your/project"  # optional, defaults to cwd
+      FLYWHEEL_PROJECT_ROOT: "/path/to/your/project"
 ```
 
-Restart Hermes. You should see `mcp_flywheel_beads_*` tools available.
+Or for a local clone:
 
-## Load the skill
+```yaml
+mcp_servers:
+  flywheel:
+    command: python
+    args: ["-m", "hermes_flywheel.server"]
+    env:
+      PYTHONPATH: "/path/to/hermes-flywheel"
+      FLYWHEEL_PROJECT_ROOT: "/path/to/your/project"
+```
 
-In your Hermes session:
+Restart Hermes. You should see `mcp_flywheel_beads_*` tools in your session.
+
+## Usage
+
+Load the skill:
 
 ```
 /skill flywheel
 ```
 
-This loads the methodology workflow. The agent now operates in flywheel mode: plan first, beads second, code last. Remove the skill to go back to normal operation.
+The agent now operates in flywheel mode. Planning happens before any code is written. Work is tracked as beads with dependencies. Graph analytics tell the agent what to work on next.
+
+### Quick start — your first beads
+
+```
+beads_create(title="Add auth middleware", type="feature", priority=1)
+beads_create(title="Add login UI", type="feature", priority=2)
+beads_update(bead_id="bd-xxx", dependencies=["bd-yyy"])
+beads_ready()          → what can I work on?
+beads_triage()         → what should I work on? (robot_next)
+beads_update(bead_id="bd-xxx", claim="agent-1")   → mine now
+# ... do the work ...
+flywheel_land(bead_id="bd-xxx")                   → done, clean exit
+```
+
+### Formulas — reusable workflows
+
+Pour a formula into a molecule. The formula expands into a hierarchy of beads with dependencies:
+
+```
+formula_install("feature")
+formula_pour("feature", {"feature_name": "dark mode"})
+```
+
+Built-in formulas: `feature`, `bugfix`, `refactor`, `release`. Define your own in `.beads/formulas/*.formula.toml`.
 
 ## Tools
 
-### beads_create
-
-```python
-beads_create(title="Add rate limiting middleware", type="feature", priority=1)
-```
-
-Creates a bead with a deterministic hash ID. Priority: 0=critical, 1=high, 2=medium, 3=low, 4=backlog.
-
-### beads_update
-
-```python
-beads_update(bead_id="bd-abc12345", dependencies=["bd-def67890"], claim="agent-1")
-```
-
-Update status, dependencies, or metadata. Setting `claim` atomically reserves the bead and sets status to `in_progress`. Other agents calling `beads_ready` will not see claimed beads.
-
-### beads_ready
-
-Returns beads you can work on right now: open, all dependencies satisfied, not claimed by anyone else. Sorted by priority.
-
-### beads_triage
-
-The central intelligence. Runs the full graph analytics suite:
-
-- **robot_next**: the single bead with the highest PageRank among ready beads
-- **critical_path**: the longest dependency chain determining minimum project time
-- **bottlenecks**: top 5 betweenness centrality beads
-- **cycles**: any circular dependencies that need breaking
-- **ready_beads**: top 10 actionable beads by priority
-
-Call this before every work session.
-
-### beads_remember
-
-```python
-beads_remember(bead_id="bd-abc12345", key="gotcha", value="Don't use async here — conflicts with the DB driver")
-```
-
-Stores knowledge directly in bead metadata. Avoids separate MEMORY.md files that eat context window space.
-
-### flywheel_land
-
-Shutdown protocol. Call at the end of every session:
-
-```python
-flywheel_land(bead_id="bd-abc12345")
-```
-
-Marks the bead closed, surfaces any in-progress beads that need follow-up, and returns a checklist: lint, test, commit, push.
+| Tool | What it does |
+|------|-------------|
+| `beads_create` | Create a bead with deterministic hash ID |
+| `beads_update` | Update status, dependencies, claim, metadata |
+| `beads_list` | List beads with optional filters |
+| `beads_ready` | Beads you can work on right now |
+| `beads_triage` | Full graph analytics: robot_next, critical path, bottlenecks, cycles |
+| `beads_remember` | Store knowledge in bead metadata (no separate MEMORY.md) |
+| `flywheel_land` | Shutdown protocol: close, checklist, follow-ups |
+| `flywheel_stats` | Summary statistics |
+| `formula_pour` | Expand a formula into a molecule |
+| `formula_list` | List available formulas |
+| `formula_install` | Install a built-in formula |
 
 ## Storage
 
-All beads live in `.beads/issues.jsonl` at your project root. One JSON object per line. Git-friendly format — changes are diffable, merges are straightforward, no binary blobs.
-
-Writes use `os.replace()` for atomicity. If the process dies mid-write, the file is either the old version or the new version, never a half-written mess.
-
-## Graph engine
-
-Pure Python, zero external dependencies. Runs in the RPC child process so it never touches the LLM's context window. The agent gets a pre-computed JSON result: "here's the critical path, here's robot_next." No tokens spent on graph math.
-
-Algorithms implemented:
-- PageRank with teleport damping
-- Critical path (longest-path DP on DAG)
-- Betweenness centrality (Brandes algorithm)
-- Kahn's topological sort with cycle detection
+All beads live in `.beads/issues.jsonl`. One JSON object per line. Git-friendly. Writes use `os.replace()` for atomicity — the file is either old or new, never a half-written mess.
 
 ## How it fits into Hermes
 
-The flywheel doesn't replace any existing Hermes tool. It layers on top:
+The flywheel layers on top, replacing nothing:
 
-- **Planning**: still use `/plan` or the model's reasoning. The flywheel converts plans to beads.
-- **Execution**: still use `delegate_task` or terminal. The flywheel tells you which beads to delegate.
-- **Memory**: still use `memory` tool. The flywheel adds structured per-task memory via `beads_remember`.
-- **Kanban**: different philosophy. Kanban is for multi-profile work queues. Flywheel is for graph-driven single-project execution.
+- **Planning**: converts plans to beads with graph dependencies
+- **Execution**: tells you which beads to delegate, then you spawn subagents with `delegate_task`
+- **Memory**: adds structured per-task memory via `beads_remember` — cleaner than `MEMORY.md`
+- **Kanban**: different beast. Kanban is for multi-profile work queues. Flywheel is for graph-driven single-project execution
 
-Load the skill when you want graph intelligence. Don't load it when you're doing a quick file edit.
-
-## Context engineering
-
-This matters. Every token you spend on task management is a token you can't spend on code.
-
-- `beads_ready` returns only actionable beads, not the full database
-- `beads_triage` computes graph math in Python, not in LLM reasoning
-- `beads_remember` stores knowledge in structured metadata instead of verbose markdown
-- Closed beads are summarized by title and status, descriptions are dropped
-- The agent never sees the raw JSONL file. It only sees filtered, sorted results
+Load `/skill flywheel` when you want graph intelligence. Don't load it for quick file edits.
 
 ## Credits
 
-Methodology by [Jeff Emanuel](https://github.com/Dicklesworthstone) (Dicklesworthstone). The flywheel concept, beads architecture, and three-space reasoning model are his work.
-
-Reverse-engineered and adapted for Hermes Agent by [@halaprix](https://github.com/halaprix).
+Methodology: [Jeff Emanuel](https://github.com/Dicklesworthstone) (Dicklesworthstone).  
+Original beads: [gastownhall/beads](https://github.com/gastownhall/beads).  
+Reverse-engineered and adapted for Hermes by [@halaprix](https://github.com/halaprix).
 
 ## License
 
