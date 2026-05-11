@@ -47,7 +47,7 @@ except ImportError:
 # Core Bead Operations
 # ═══════════════════════════════════════════════════════════════════════
 
-@mcp.tool
+@mcp.tool()
 def beads_create(
     title: str,
     type: str = "task",
@@ -70,7 +70,7 @@ def beads_create(
     )
 
 
-@mcp.tool
+@mcp.tool()
 def beads_update(
     bead_id: str,
     status: str | None = None,
@@ -97,7 +97,7 @@ def beads_update(
     )
 
 
-@mcp.tool
+@mcp.tool()
 def beads_list(
     status: str | None = None,
     priority_min: int | None = None,
@@ -119,7 +119,7 @@ def beads_list(
     )
 
 
-@mcp.tool
+@mcp.tool()
 def beads_ready() -> dict:
     """Return actionable beads — open, unblocked, unclaimed — sorted by priority.
 
@@ -133,7 +133,7 @@ def beads_ready() -> dict:
 # Graph Analytics
 # ═══════════════════════════════════════════════════════════════════════
 
-@mcp.tool
+@mcp.tool()
 def beads_triage() -> dict:
     """Full graph triage — the central intelligence of the flywheel.
 
@@ -154,7 +154,7 @@ def beads_triage() -> dict:
 # Memory & Knowledge
 # ═══════════════════════════════════════════════════════════════════════
 
-@mcp.tool
+@mcp.tool()
 def beads_remember(
     bead_id: str,
     key: str,
@@ -182,7 +182,7 @@ def beads_remember(
 # Operational Protocols
 # ═══════════════════════════════════════════════════════════════════════
 
-@mcp.tool
+@mcp.tool()
 def flywheel_land(bead_id: str | None = None) -> dict:
     """Execute the 'Land the Plane' shutdown protocol.
 
@@ -235,7 +235,7 @@ def flywheel_land(bead_id: str | None = None) -> dict:
     return result
 
 
-@mcp.tool
+@mcp.tool()
 def flywheel_stats() -> dict:
     """Return summary statistics for the current flywheel project."""
     return _store.beads_stats(project_root=PROJECT_ROOT)
