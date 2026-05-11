@@ -411,8 +411,8 @@ def main():
     global BEADS_FILE
     BEADS_FILE = Path(args.project_root) / ".beads" / "issues.jsonl"
 
-    server = HTTPServer(("127.0.0.1", args.port), Handler)
-    print(f"🌀 Flywheel Dashboard → http://127.0.0.1:{args.port}")
+    server = HTTPServer(("0.0.0.0", args.port), Handler)
+    print(f"🌀 Flywheel Dashboard → http://0.0.0.0:{args.port}")
     print(f"   Reading beads from: {BEADS_FILE}")
     try:
         server.serve_forever()
