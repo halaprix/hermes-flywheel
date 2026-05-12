@@ -222,12 +222,19 @@ async function fetchProjects() {
 }
 
 async function fetchData() {
-  const r = await fetch('/api/beads?project=' + encodeURIComponent(currentProject));
-  const d = await r.json();
-  data = d.beads || [];
-  depsMap = d.dep_map || {};
-  document.getElementById('project').textContent = '— ' + (d.project_name || '');
-  renderStats(d.stats);
+  try {
+    const r = await fetch('/api/beads?project=' + encodeURIComponent(currentProject));
+    const d = await r.json();
+    data = d.beads || [];
+    depsMap = d.dep_map || {};
+    document.getElementById('project').textContent = '— ' + (d.project_name || '');
+    renderStats(d.stats);
+  } catch(e) {
+    data = [];
+    depsMap = {};
+    document.getElementById('project').textContent = '— error';
+    renderStats(null);
+  }
   renderTable();
   renderGraph();
   renderDebug();
