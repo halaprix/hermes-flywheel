@@ -127,6 +127,16 @@ USER INTENT
 
 ## Bead Operations
 
+All bead operations accept an optional `project_root` parameter for per-project isolation. When omitted, the default project root from `FLYWHEEL_PROJECT_ROOT` env var (or cwd) is used.
+
+```
+# Per-project usage:
+beads_create(title="Add auth", project_root="/path/to/project")
+beads_triage(project_root="/path/to/project")
+```
+
+Each project stores its beads in `<project_root>/.beads/issues.jsonl`, which can be committed to the repository alongside the code.
+
 ### Creating beads
 
 ```

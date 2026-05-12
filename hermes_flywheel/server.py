@@ -39,10 +39,12 @@ try:
     from . import graph as _graph
     from . import storage as _store
     from . import formulas as _formulas
+    from .storage import _read_all, _issues_path
 except ImportError:
     import graph as _graph  # type: ignore[no-redef]
     import storage as _store  # type: ignore[no-redef]
     import formulas as _formulas  # type: ignore[no-redef]
+    from storage import _read_all, _issues_path  # type: ignore[no-redef]
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -55,20 +57,23 @@ def beads_create(
     type: str = "task",
     priority: int = 2,
     description: str = "",
+    project_root: str = "",
 ) -> dict:
     """Create a new bead (task) in the flywheel.
 
     Priority scale: 0=critical(security/bug), 1=high, 2=medium(default), 3=low, 4=backlog.
     Types: bug, feature, task, epic, chore.
+    project_root: path to project directory (default: FLYWHEEL_PROJECT_ROOT env var or cwd)
 
     Returns the created bead with its hash ID (bd-xxxxxxxx).
     """
+    pr = project_root or PROJECT_ROOT
     return _store.beads_create(
         title=title,
         type_=type,
         priority=priority,
         description=description,
-        project_root=PROJECT_ROOT,
+        project_root=pr,
     )
 
 
@@ -80,6 +85,7 @@ def beads_update(
     dependencies: list[str] | None = None,
     description: str | None = None,
     claim: str | None = None,
+    project_root: str = "",
 ) -> dict:
     """Update an existing bead.
 
@@ -87,7 +93,9 @@ def beads_update(
     claim: agent identifier to atomically reserve this bead (prevents duplicate work).
            When claim is set, status auto-changes to 'in_progress'.
     dependencies: list of bead IDs that block this bead.
+    project_root: path to project directory (default: FLYWHEEL_PROJECT_ROOT env var or cwd)
     """
+    pr = project_root or PROJECT_ROOT
     return _store.beads_update(
         bead_id=bead_id,
         status=status,
@@ -95,7 +103,7 @@ def beads_update(
         dependencies=dependencies,
         description=description,
         claim=claim,
-        project_root=PROJECT_ROOT,
+        project_root=pr,
     )
 
 
@@ -105,30 +113,35 @@ def beads_list(
     priority_min: int | None = None,
     priority_max: int | None = None,
     type: str | None = None,
+    project_root: str = "",
 ) -> dict:
     """List beads with optional filters.
 
     status: open, in_progress, blocked, closed, deferred
     priority_min/priority_max: filter by priority range
     type: bug, feature, task, epic, chore
+    project_root: path to project directory (default: FLYWHEEL_PROJECT_ROOT env var or cwd)
     """
+    pr = project_root or PROJECT_ROOT
     return _store.beads_list(
         status=status,
         priority_min=priority_min,
         priority_max=priority_max,
         type_=type,
-        project_root=PROJECT_ROOT,
+        project_root=pr,
     )
 
 
 @mcp.tool()
-def beads_ready() -> dict:
+def beads_ready(project_root: str = "") -> dict:
     """Return actionable beads — open, unblocked, unclaimed — sorted by priority.
 
     These are the beads you can start working on RIGHT NOW.
     Beads with unsatisfied dependencies or claimed by another agent are excluded.
+    project_root: path to project directory (default: FLYWHEEL_PROJECT_ROOT env var or cwd)
     """
-    return _store.beads_ready(project_root=PROJECT_ROOT)
+    pr = project_root or PROJECT_ROOT
+    return _store.beads_ready(project_root=pr)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -136,7 +149,7 @@ def beads_ready() -> dict:
 # ═══════════════════════════════════════════════════════════════════════
 
 @mcp.tool()
-def beads_triage() -> dict:
+def beads_triage(project_root: str = "") -> dict:
     """Full graph triage — the central intelligence of the flywheel.
 
     Returns:
@@ -148,8 +161,10 @@ def beads_triage() -> dict:
     - stats: summary counts by status, priority, type
 
     Call this when you need to decide what to work on next or before launching a swarm.
+    project_root: path to project directory (default: FLYWHEEL_PROJECT_ROOT env var or cwd)
     """
-    return _graph.beads_triage(project_root=PROJECT_ROOT)
+    pr = project_root or PROJECT_ROOT
+    return _graph.beads_triage(project_root=pr)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -161,6 +176,7 @@ def beads_remember(
     bead_id: str,
     key: str,
     value: str,
+    project_root: str = "",
 ) -> dict:
     """Store persistent knowledge inside a bead's metadata.
 
@@ -171,12 +187,14 @@ def beads_remember(
     Examples:
     - key="pattern", value="use adapter pattern for payment integrations"
     - key="gotcha", value="don't use async in this module — conflicts with library X"
+    project_root: path to project directory (default: FLYWHEEL_PROJECT_ROOT env var or cwd)
     """
+    pr = project_root or PROJECT_ROOT
     return _store.beads_remember(
         bead_id=bead_id,
         key=key,
         value=value,
-        project_root=PROJECT_ROOT,
+        project_root=pr,
     )
 
 
@@ -185,7 +203,7 @@ def beads_remember(
 # ═══════════════════════════════════════════════════════════════════════
 
 @mcp.tool()
-def flywheel_land(bead_id: str | None = None) -> dict:
+def flywheel_land(bead_id: str | None = None, project_root: str = "") -> dict:
     """Execute the 'Land the Plane' shutdown protocol.
 
     Call this at the END of every agent session. Ensures clean state:
@@ -194,7 +212,9 @@ def flywheel_land(bead_id: str | None = None) -> dict:
     3. Returns checklist: lint, test, rebase, push
 
     This guarantees every session terminates with stable, production-ready state.
+    project_root: path to project directory (default: FLYWHEEL_PROJECT_ROOT env var or cwd)
     """
+    pr = project_root or PROJECT_ROOT
     result: dict = {
         "checklist": [
             "✓ Run linter/formatter on changed files",
@@ -211,7 +231,7 @@ def flywheel_land(bead_id: str | None = None) -> dict:
         update_result = _store.beads_update(
             bead_id=bead_id,
             status="closed",
-            project_root=PROJECT_ROOT,
+            project_root=pr,
         )
         if "error" not in update_result:
             result["closed_bead"] = {
@@ -220,11 +240,7 @@ def flywheel_land(bead_id: str | None = None) -> dict:
             }
 
     # Find any open beads that were touched but not closed
-    try:
-        from .storage import _read_all, _issues_path as _store_issues_path
-    except ImportError:
-        from storage import _read_all, _issues_path as _store_issues_path  # type: ignore[no-redef]
-    all_issues = _read_all(_store_issues_path(PROJECT_ROOT))
+    all_issues = _read_all(_issues_path(pr))
     for issue in all_issues:
         if issue["status"] == "in_progress" and issue.get("metadata", {}).get("claimed_by"):
             result["follow_up_beads"].append({
@@ -238,9 +254,12 @@ def flywheel_land(bead_id: str | None = None) -> dict:
 
 
 @mcp.tool()
-def flywheel_stats() -> dict:
-    """Return summary statistics for the current flywheel project."""
-    return _store.beads_stats(project_root=PROJECT_ROOT)
+def flywheel_stats(project_root: str = "") -> dict:
+    """Return summary statistics for the current flywheel project.
+    project_root: path to project directory (default: FLYWHEEL_PROJECT_ROOT env var or cwd)
+    """
+    pr = project_root or PROJECT_ROOT
+    return _store.beads_stats(project_root=pr)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -252,6 +271,7 @@ def formula_pour(
     formula_name: str,
     vars: dict | None = None,
     dry_run: bool = False,
+    project_root: str = "",
 ) -> dict:
     """Pour a formula into a molecule — creates parent + child beads.
 
@@ -260,33 +280,39 @@ def formula_pour(
 
     Example: formula_pour('feature', {'feature_name': 'dark mode'})
     Preview: formula_pour('feature', {'feature_name': 'dark mode'}, dry_run=True)
+    project_root: path to project directory (default: FLYWHEEL_PROJECT_ROOT env var or cwd)
     """
+    pr = project_root or PROJECT_ROOT
     return _formulas.formula_pour(
         formula_name=formula_name,
         vars=vars,
-        project_root=PROJECT_ROOT,
+        project_root=pr,
         dry_run=dry_run,
     )
 
 
 @mcp.tool()
-def formula_list() -> dict:
+def formula_list(project_root: str = "") -> dict:
     """List available formulas (project, user, and built-in).
 
     Returns formula names, descriptions, step counts, and locations.
     Use formula_install to add a built-in formula to your project.
+    project_root: path to project directory (default: FLYWHEEL_PROJECT_ROOT env var or cwd)
     """
-    return _formulas.formula_list(project_root=PROJECT_ROOT)
+    pr = project_root or PROJECT_ROOT
+    return _formulas.formula_list(project_root=pr)
 
 
 @mcp.tool()
-def formula_install(name: str) -> dict:
+def formula_install(name: str, project_root: str = "") -> dict:
     """Install a built-in formula into the project's .beads/formulas/ directory.
 
     Built-in formulas: feature, bugfix, refactor, release.
     After installing, use formula_pour to create molecules.
+    project_root: path to project directory (default: FLYWHEEL_PROJECT_ROOT env var or cwd)
     """
-    return _formulas.formula_install_builtin(name=name, project_root=PROJECT_ROOT)
+    pr = project_root or PROJECT_ROOT
+    return _formulas.formula_install_builtin(name=name, project_root=pr)
 
 
 DASHBOARD_PORT = int(os.environ.get("FLYWHEEL_DASHBOARD_PORT", "0"))
