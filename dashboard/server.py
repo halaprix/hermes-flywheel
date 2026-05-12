@@ -142,6 +142,7 @@ td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
 <div id="debug" class="view"></div>
 
 <script>
+const REFRESH = REFRESH_SECS;
 let data = [];
 let depsMap = {};
 let countdown = REFRESH;
@@ -332,7 +333,6 @@ function switchTab(name) {
 setInterval(() => { countdown--; document.getElementById('countdown').textContent=countdown; if(countdown<=0) fetchData(); }, 1000);
 
 fetchData();
-const REFRESH = REFRESH_SECS;
 </script>
 </body>
 </html>""".replace("REFRESH_SECS", str(REFRESH_SECONDS))
