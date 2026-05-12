@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Flywheel Dashboard — live bead graph viewer for Hermes Agent.
 
-Serves on :9120. Reads .beads/issues.jsonl, renders table + dependency tree + debug view.
+Serves on :9120. Reads .beads/issues.jsonl from multiple projects,
+renders table + dependency tree + debug view.
 Auto-refreshes every 5 seconds via polling.
 
-Usage: python dashboard.py [--port 9120] [--project-root /path]
+Usage: python dashboard.py [--port 9120] [--project-root /path] [--scan-dirs ~/workspace,~]
 """
 
 from __future__ import annotations
@@ -20,13 +21,45 @@ from urllib.parse import urlparse, parse_qs
 PROJECT_ROOT = os.environ.get("FLYWHEEL_PROJECT_ROOT", os.path.expanduser("~"))
 BEADS_FILE = Path(PROJECT_ROOT) / ".beads" / "issues.jsonl"
 REFRESH_SECONDS = 5
+SCAN_DIRS: list[str] = [os.path.expanduser("~/workspace"), os.path.expanduser("~")]
 
 
-def load_beads() -> list[dict]:
-    if not BEADS_FILE.exists():
+def discover_projects(scan_dirs: list[str]) -> list[dict]:
+    """Find all .beads/issues.jsonl files under scan directories (depth 3)."""
+    found: dict[str, dict] = {}
+    for scan_dir in scan_dirs:
+        base = Path(os.path.expanduser(scan_dir))
+        if not base.exists():
+            continue
+        # Search up to 3 levels deep
+        for pattern in ["*/.beads/issues.jsonl", "*/*/.beads/issues.jsonl", "*/*/*/.beads/issues.jsonl"]:
+            for p in base.glob(pattern):
+                proj_dir = str(p.parent.parent)
+                if proj_dir not in found:
+                    found[proj_dir] = {
+                        "path": proj_dir,
+                        "name": Path(proj_dir).name,
+                        "beads_file": str(p),
+                    }
+    # Sort by name
+    result = sorted(found.values(), key=lambda x: x["name"])
+    # Ensure default project is in list
+    default = str(BEADS_FILE.parent.parent)
+    if not any(r["path"] == default for r in result):
+        result.insert(0, {
+            "path": default,
+            "name": Path(default).name,
+            "beads_file": str(BEADS_FILE),
+        })
+    return result
+
+
+def load_beads(beads_file: Path | None = None) -> list[dict]:
+    path = beads_file or BEADS_FILE
+    if not path.exists():
         return []
     beads = []
-    with open(BEADS_FILE) as f:
+    with open(path) as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -38,8 +71,8 @@ def load_beads() -> list[dict]:
     return beads
 
 
-def beads_json() -> str:
-    return json.dumps(load_beads(), indent=2)
+def beads_json(beads_file: Path | None = None) -> str:
+    return json.dumps(load_beads(beads_file), indent=2)
 
 
 def bead_deps_map(beads: list[dict]) -> dict[str, list[str]]:
@@ -77,13 +110,17 @@ HTML = r"""<!DOCTYPE html>
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font: 14px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); padding: 24px; }
-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 12px; }
 h1 { font-size: 20px; display: flex; align-items: center; gap: 10px; }
 h1 span { font-size: 14px; color: var(--text-muted); font-weight: normal; }
 .stats { display: flex; gap: 20px; font-size: 13px; }
 .stat { text-align: center; }
 .stat .num { font-size: 24px; font-weight: 700; }
 .stat .label { color: var(--text-muted); font-size: 11px; text-transform: uppercase; }
+.project-bar { display: flex; align-items: center; gap: 10px; width: 100%; }
+.project-bar select { background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; font-size: 13px; cursor: pointer; min-width: 200px; }
+.project-bar select:focus { outline: none; border-color: var(--accent); }
+.project-bar .proj-label { color: var(--text-muted); font-size: 12px; }
 .tabs { display: flex; gap: 4px; margin-bottom: 16px; }
 .tab { padding: 8px 16px; border: 1px solid var(--border); border-radius: 6px 6px 0 0; cursor: pointer; background: var(--surface); color: var(--text-muted); font-size: 13px; }
 .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
@@ -131,6 +168,12 @@ td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
   </div>
   <div class="stats" id="stats"></div>
 </header>
+<div class="project-bar">
+  <span class="proj-label">Project:</span>
+  <select id="projectSelect" onchange="onProjectChange(this.value)">
+    <option value="">Loading...</option>
+  </select>
+</div>
 <div class="tabs">
   <div class="tab active" onclick="switchTab('table')">📋 Table</div>
   <div class="tab" onclick="switchTab('tree')">🔗 Dependency Graph</div>
@@ -146,18 +189,55 @@ const REFRESH = REFRESH_SECS;
 let data = [];
 let depsMap = {};
 let countdown = REFRESH;
+let currentProject = '';
+let projects = [];
+
+// URL query param support
+function getQueryParam(name) {
+  const url = new URL(window.location);
+  return url.searchParams.get(name);
+}
+function setQueryParam(name, value) {
+  const url = new URL(window.location);
+  if (value) url.searchParams.set(name, value);
+  else url.searchParams.delete(name);
+  window.history.replaceState({}, '', url);
+}
+
+async function fetchProjects() {
+  const r = await fetch('/api/projects');
+  projects = await r.json();
+  const sel = document.getElementById('projectSelect');
+  sel.innerHTML = projects.map(p => `<option value="${escAttr(p.path)}">${esc(p.name)} (${esc(p.path)})</option>`).join('');
+
+  // Select project from URL param or first
+  const urlProj = getQueryParam('project');
+  if (urlProj && projects.find(p => p.path === urlProj)) {
+    currentProject = urlProj;
+  } else {
+    currentProject = projects[0]?.path || '';
+    if (currentProject) setQueryParam('project', currentProject);
+  }
+  sel.value = currentProject;
+}
 
 async function fetchData() {
-  const r = await fetch('/api/beads');
+  const r = await fetch('/api/beads?project=' + encodeURIComponent(currentProject));
   const d = await r.json();
   data = d.beads || [];
   depsMap = d.dep_map || {};
-  document.getElementById('project').textContent = d.project || '';
+  document.getElementById('project').textContent = '— ' + (d.project_name || '');
   renderStats(d.stats);
   renderTable();
   renderGraph();
   renderDebug();
   countdown = REFRESH;
+}
+
+function onProjectChange(value) {
+  currentProject = value;
+  setQueryParam('project', currentProject);
+  fetchData();
 }
 
 function renderStats(stats) {
@@ -196,7 +276,6 @@ function renderTable() {
 }
 
 function renderGraph() {
-  // Build children map: who depends on me?
   const idSet = new Set(data.map(b=>b.id));
   const children = {};
   for (const b of data) children[b.id] = [];
@@ -206,7 +285,6 @@ function renderGraph() {
     }
   }
 
-  // Topological sort with longest-path layering
   const inDeg = {};
   for (const b of data) inDeg[b.id] = 0;
   for (const b of data) {
@@ -233,12 +311,10 @@ function renderGraph() {
     }
   }
 
-  // Handle cycles / disconnected: assign layer 0
   for (const b of data) {
     if (layer[b.id] === undefined) layer[b.id] = 0;
   }
 
-  // Group by layer
   const layers = {};
   let maxLayer = 0;
   for (const b of data) {
@@ -258,7 +334,6 @@ function renderGraph() {
   const totalH = maxNodesInLayer * (NODE_H + NODE_GAP) + PAD * 2;
   const totalW = (maxLayer + 1) * LAYER_GAP + NODE_W + PAD;
 
-  // Calculate positions: center nodes vertically within each layer
   const positions = {};
   for (let l = 0; l <= maxLayer; l++) {
     const nodes = layers[l] || [];
@@ -272,7 +347,6 @@ function renderGraph() {
     });
   }
 
-  // SVG arrows with bezier curves
   let svgArrows = '';
   const colors = {'open':'#6b7280','in_progress':'#3b82f6','blocked':'#ef4444','closed':'#3fb950','deferred':'#f59e0b'};
 
@@ -292,7 +366,6 @@ function renderGraph() {
     }
   }
 
-  // HTML nodes
   let nodesHtml = '';
   for (const b of data) {
     const pos = positions[b.id];
@@ -322,6 +395,7 @@ function renderDebug() {
 }
 
 function esc(s) { const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
+function escAttr(s) { return s.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
@@ -330,9 +404,14 @@ function switchTab(name) {
   document.getElementById(name).classList.add('active');
 }
 
+async function init() {
+  await fetchProjects();
+  await fetchData();
+}
+
 setInterval(() => { countdown--; document.getElementById('countdown').textContent=countdown; if(countdown<=0) fetchData(); }, 1000);
 
-fetchData();
+init();
 </script>
 </body>
 </html>""".replace("REFRESH_SECS", str(REFRESH_SECONDS))
@@ -343,11 +422,23 @@ class Handler(BaseHTTPRequestHandler):
         pass  # silent
 
     def do_GET(self):
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
+        params = parse_qs(parsed.query)
+
+        if path == "/api/projects":
+            projects = discover_projects(SCAN_DIRS)
+            self._json(projects)
+            return
 
         if path == "/api/beads":
-            beads = load_beads()
-            dep_map = {}  # simplified
+            # Support ?project=/path/to/project
+            proj_path = params.get("project", [None])[0]
+            if proj_path:
+                bf = Path(proj_path) / ".beads" / "issues.jsonl"
+            else:
+                bf = BEADS_FILE
+            beads = load_beads(bf)
             stats = {
                 "total": len(beads),
                 "closed": sum(1 for b in beads if b["status"] == "closed"),
@@ -357,7 +448,8 @@ class Handler(BaseHTTPRequestHandler):
                 "claimed": sum(1 for b in beads if b.get("metadata", {}).get("claimed_by")),
             }
             self._json({
-                "project": str(BEADS_FILE),
+                "project": str(bf),
+                "project_name": Path(bf).parent.parent.name if bf.exists() else "unknown",
                 "beads": beads,
                 "dep_map": bead_deps_map(beads),
                 "stats": stats,
@@ -365,7 +457,12 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/raw":
-            self._text(beads_json())
+            proj_path = params.get("project", [None])[0]
+            if proj_path:
+                bf = Path(proj_path) / ".beads" / "issues.jsonl"
+            else:
+                bf = BEADS_FILE
+            self._text(beads_json(bf))
             return
 
         # Default: serve HTML
@@ -406,14 +503,18 @@ def main():
     parser = argparse.ArgumentParser(description="Flywheel Dashboard")
     parser.add_argument("--port", type=int, default=9120)
     parser.add_argument("--project-root", default=PROJECT_ROOT)
+    parser.add_argument("--scan-dirs", default="~/workspace,~",
+                        help="Comma-separated directories to scan for projects")
     args = parser.parse_args()
 
-    global BEADS_FILE
-    BEADS_FILE = Path(args.project_root) / ".beads" / "issues.jsonl"
+    global BEADS_FILE, SCAN_DIRS
+    BEADS_FILE = Path(os.path.expanduser(args.project_root)) / ".beads" / "issues.jsonl"
+    SCAN_DIRS = [d.strip() for d in args.scan_dirs.split(",") if d.strip()]
 
     server = HTTPServer(("0.0.0.0", args.port), Handler)
     print(f"🌀 Flywheel Dashboard → http://0.0.0.0:{args.port}")
-    print(f"   Reading beads from: {BEADS_FILE}")
+    print(f"   Default project: {BEADS_FILE}")
+    print(f"   Scanning: {SCAN_DIRS}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

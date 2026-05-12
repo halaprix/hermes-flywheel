@@ -232,9 +232,12 @@ A live bead viewer ships with the MCP server at `dashboard/server.py`. Serves on
 
 Auto-refreshes every 5 seconds. Zero external dependencies — pure stdlib `http.server` + embedded HTML/CSS/JS.
 
+**Per-project support:** Dropdown selector switches between projects. URL query parameter `?project=/path` deep-links to a specific project. Projects are auto-discovered by scanning `--scan-dirs` for `.beads/issues.jsonl` files.
+
 ```bash
 systemctl --user enable --now flywheel-dashboard
 # → http://localhost:9120
+# → http://localhost:9120/?project=/home/pkl/workspace/my-project
 ```
 
 **⚠️ Bind address:** The dashboard binds to `0.0.0.0` so it's reachable via Tailscale. If you change it to `127.0.0.1`, it will only work locally — Tailscale clients won't connect. Always verify with `ss -tlnp | grep 9120` that it shows `0.0.0.0:9120`, not `127.0.0.1:9120`.
