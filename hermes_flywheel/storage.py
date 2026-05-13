@@ -4,7 +4,7 @@ Storage format: one JSON object per line in .beads/issues.jsonl
 Atomic writes via temp file + os.replace() — prevents corruption on RPC thread kill.
 Atomic claims via fcntl.flock() — prevents TOCTOU race in multi-agent setups.
 
-Data model (aligned with beads_rust v0.2.7):
+Data model (aligned with beads_rust):
   - id: "bd-{sha256[:8]}"
   - issue_type: bug, feature, task, epic, chore, docs, question
   - priority: 0=critical, 1=high, 2=medium, 3=low, 4=backlog
@@ -24,9 +24,10 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
-# ── Constants (aligned with beads_rust) ──────────────────────────────────
+
+# ── Constants ────────────────────────────────────────────────────────────
 
 MAX_TITLE_LENGTH = 500
 MAX_DESCRIPTION_BYTES = 102_400  # 100 KB
@@ -34,16 +35,12 @@ VALID_PRIORITIES = frozenset({0, 1, 2, 3, 4})
 
 VALID_STATUSES = frozenset({
     "open", "in_progress", "blocked", "closed", "deferred",
-    # extended set (beads_rust compat)
-    "draft", "tombstone", "pinned",
 })
 
 VALID_ISSUE_TYPES = frozenset({
     "bug", "feature", "task", "epic", "chore", "docs", "question",
 })
 
-# Dependency types that BLOCK ready status (bead is NOT ready if any
-# blocking dep target is unresolved)
 BLOCKING_DEP_TYPES = frozenset({
     "blocks", "parent-child", "waits-for", "conditional-blocks",
 })
@@ -53,10 +50,10 @@ ALL_DEP_TYPES = BLOCKING_DEP_TYPES | {
     "duplicates", "supersedes", "caused-by",
 }
 
+
 # ── Filesystem helpers ───────────────────────────────────────────────────
 
 def _beads_dir(project_root: str | None = None) -> Path:
-    """Resolve .beads directory under project root or cwd."""
     base = Path(project_root) if project_root else Path.cwd()
     return base / ".beads"
 
@@ -70,7 +67,6 @@ def _write_lock_path(project_root: str | None = None) -> Path:
 
 
 def _make_hash(title: str, now: float | None = None) -> str:
-    """Deterministic hash-based ID: bd-{8 hex chars}."""
     ts = now or time.time()
     raw = f"{title}:{ts}"
     digest = hashlib.sha256(raw.encode()).hexdigest()[:8]
@@ -82,57 +78,12 @@ def _ensure_dir(path: Path) -> None:
 
 
 def _atomic_write(path: Path, lines: list[str]) -> None:
-    """Write lines to temp file, then atomically replace target."""
     _ensure_dir(path)
     tmp = path.with_suffix(path.suffix + ".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         for line in lines:
             f.write(line.rstrip("\n") + "\n")
     os.replace(tmp, path)
-
-
-# ── Backward compat: normalize old dep format ────────────────────────────
-
-def _normalize_dep(dep: str | dict[str, Any]) -> dict[str, Any]:
-    """Normalize a dependency entry to the object format.
-
-    Old format: "bd-abc123" → {"id": "bd-abc123", "type": "blocks"}
-    New format: {"id": "bd-abc123", "type": "blocks"} → passthrough
-    """
-    if isinstance(dep, str):
-        return {"id": dep, "type": "blocks"}
-    # Ensure it has 'id' and 'type' keys
-    if "id" not in dep:
-        raise ValueError(f"Dependency missing 'id': {dep}")
-    dep.setdefault("type", "blocks")
-    return dep
-
-
-def _normalize_deps(deps: list) -> list[dict[str, Any]]:
-    """Normalize a list of dependencies to object format."""
-    return [_normalize_dep(d) for d in deps]
-
-
-def _dep_ids(deps: list) -> list[str]:
-    """Extract just the bead IDs from dependency objects/strings."""
-    return [d["id"] if isinstance(d, dict) else d for d in deps]
-
-
-# ── Backward compat: normalize old type field ────────────────────────────
-
-def _normalize_issue(issue: dict[str, Any]) -> dict[str, Any]:
-    """Normalize an issue dict: migrate 'type' → 'issue_type', deps format."""
-    # Field rename: type → issue_type
-    if "type" in issue and "issue_type" not in issue:
-        issue["issue_type"] = issue.pop("type")
-    if "issue_type" not in issue:
-        issue["issue_type"] = "task"
-    # Normalize dependencies
-    if "dependencies" in issue:
-        issue["dependencies"] = _normalize_deps(issue["dependencies"])
-    # Ensure metadata exists
-    issue.setdefault("metadata", {})
-    return issue
 
 
 # ── I/O ──────────────────────────────────────────────────────────────────
@@ -148,8 +99,7 @@ def _read_all(path: Path) -> list[dict[str, Any]]:
             if not line:
                 continue
             try:
-                issue = json.loads(line)
-                issues.append(_normalize_issue(issue))
+                issues.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
     return issues
@@ -158,11 +108,7 @@ def _read_all(path: Path) -> list[dict[str, Any]]:
 # ── File locking (atomic claims) ─────────────────────────────────────────
 
 class _WriteLock:
-    """Exclusive file lock for atomic read-modify-write operations.
-
-    Uses fcntl.flock() on .beads/.write.lock — OS-enforced exclusive access.
-    This eliminates the TOCTOU race in claim operations.
-    """
+    """Exclusive file lock for atomic read-modify-write operations."""
 
     def __init__(self, project_root: str | None = None):
         self._path = _write_lock_path(project_root)
@@ -194,15 +140,8 @@ class ValidationError(ValueError):
 def _validate_bead(
     issue: dict[str, Any],
     all_ids: set[str] | None = None,
-    is_create: bool = False,
 ) -> None:
-    """Validate a bead dict. Raises ValidationError on failure.
-
-    Args:
-        issue: The bead dict to validate.
-        all_ids: Set of all existing bead IDs (needed for dep validation).
-        is_create: If True, applies create-only checks.
-    """
+    """Validate a bead dict. Raises ValidationError on failure."""
     errors: list[str] = []
 
     # title
@@ -240,19 +179,26 @@ def _validate_bead(
     # description size
     desc = issue.get("description", "")
     if isinstance(desc, str) and len(desc.encode("utf-8")) > MAX_DESCRIPTION_BYTES:
-        errors.append(
-            f"description exceeds {MAX_DESCRIPTION_BYTES} bytes"
-        )
+        errors.append(f"description exceeds {MAX_DESCRIPTION_BYTES} bytes")
 
-    # dependencies
+    # dependencies (must be list of dicts: {"id": "...", "type": "..."})
     bead_id = issue.get("id", "")
     deps = issue.get("dependencies", [])
     seen_dep_ids: set[str] = set()
 
     for i, dep in enumerate(deps):
-        dep = _normalize_dep(dep)
-        dep_id = dep["id"]
+        if not isinstance(dep, dict):
+            errors.append(
+                f"dep[{i}]: must be object {{\"id\":\"...\", \"type\":\"...\"}}, got {type(dep).__name__}"
+            )
+            continue
+
+        dep_id = dep.get("id", "")
         dep_type = dep.get("type", "blocks")
+
+        if not dep_id:
+            errors.append(f"dep[{i}]: missing 'id' field")
+            continue
 
         # self-dependency check
         if bead_id and dep_id == bead_id:
@@ -290,7 +236,7 @@ def beads_create(
     """Create a new bead. Returns the created issue dict.
 
     Priority: 0=critical, 1=high, 2=medium, 3=low, 4=backlog
-    Types: bug, feature, task, epic, chore, docs, question
+    issue_type: bug, feature, task, epic, chore, docs, question
     """
     path = _issues_path(project_root)
     bead_id = _make_hash(title)
@@ -308,18 +254,14 @@ def beads_create(
         "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
 
-    # Validate
-    _validate_bead(issue, is_create=True)
+    _validate_bead(issue)
 
     with _WriteLock(project_root):
         existing = _read_all(path)
-
-        # Check for duplicate ID
         if any(i["id"] == bead_id for i in existing):
             return {
                 "error": f"Duplicate ID {bead_id} — re-run with different title"
             }
-
         existing.append(issue)
         lines = [json.dumps(i, ensure_ascii=False) for i in existing]
         _atomic_write(path, lines)
@@ -342,29 +284,20 @@ def beads_update(
     Atomic claims: when claim=<agent_id>, uses file lock to ensure
     exactly one agent gets the claim. If already claimed by another
     agent, returns an error with the current claimant.
-
-    claim: agent identifier for reservation lock (e.g. "agent-3")
     """
     path = _issues_path(project_root)
-
-    # Normalize dependencies if provided
-    if dependencies is not None:
-        dependencies = _normalize_deps(dependencies)
 
     with _WriteLock(project_root):
         issues = _read_all(path)
         all_ids = {i["id"] for i in issues}
 
-        # Find the target bead
-        found = False
         target = None
         for issue in issues:
             if issue["id"] == bead_id:
-                found = True
                 target = issue
                 break
 
-        if not found:
+        if target is None:
             return {"error": f"Bead {bead_id} not found"}
 
         # Atomic claim check
@@ -377,7 +310,6 @@ def beads_update(
                     "claimed_at": target.get("metadata", {}).get("claimed_at"),
                 }
 
-        # Apply updates
         if status is not None:
             target["status"] = status
         if priority is not None:
@@ -398,10 +330,8 @@ def beads_update(
 
         target["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
-        # Validate the updated bead
         _validate_bead(target, all_ids=all_ids)
 
-        # Write back
         lines = [json.dumps(i, ensure_ascii=False) for i in issues]
         _atomic_write(path, lines)
 
@@ -427,7 +357,7 @@ def beads_list(
     if priority_max is not None:
         issues = [i for i in issues if i["priority"] <= priority_max]
     if issue_type:
-        issues = [i for i in issues if i["issue_type"] == issue_type]
+        issues = [i for i in issues if i.get("issue_type") == issue_type]
     if claimed_by:
         issues = [
             i
@@ -441,9 +371,8 @@ def beads_list(
 def beads_ready(project_root: str | None = None) -> dict[str, Any]:
     """Return actionable beads — open, unblocked, unclaimed, sorted by priority.
 
-    Blocking check: only dependencies with blocking types (blocks, parent-child,
-    waits-for, conditional-blocks) prevent a bead from being ready.
-    Non-blocking deps (related, discovered-from, etc.) don't affect readiness.
+    Only dependencies with blocking types (blocks, parent-child, waits-for,
+    conditional-blocks) prevent a bead from being ready.
     """
     path = _issues_path(project_root)
     issues = _read_all(path)
@@ -459,12 +388,10 @@ def beads_ready(project_root: str | None = None) -> dict[str, Any]:
     blocked: set[str] = set()
     for issue in issues:
         for dep in issue.get("dependencies", []):
-            dep = _normalize_dep(dep)
             dep_type = dep.get("type", "blocks")
-            # Only blocking types matter for readiness
             if dep_type not in BLOCKING_DEP_TYPES:
                 continue
-            dep_id = dep["id"]
+            dep_id = dep.get("id", "")
             dep_issue = next((i for i in issues if i["id"] == dep_id), None)
             if dep_issue and dep_issue["status"] != "closed":
                 blocked.add(issue["id"])
@@ -483,9 +410,7 @@ def beads_ready(project_root: str | None = None) -> dict[str, Any]:
         and not i.get("metadata", {}).get("claimed_by")
     ]
 
-    # Sort by priority (ascending: 0=critical first), then by created_at
     ready.sort(key=lambda i: (i["priority"], i.get("created_at", "")))
-
     return {"count": len(ready), "beads": ready}
 
 
@@ -518,9 +443,9 @@ def beads_stats(project_root: str | None = None) -> dict[str, Any]:
     claimed = 0
 
     for issue in issues:
-        s = issue["status"]
+        s = issue.get("status", "open")
         by_status[s] = by_status.get(s, 0) + 1
-        p = str(issue["priority"])
+        p = str(issue.get("priority", 2))
         by_priority[p] = by_priority.get(p, 0) + 1
         t = issue.get("issue_type", "task")
         by_type[t] = by_type.get(t, 0) + 1
@@ -538,7 +463,7 @@ def beads_stats(project_root: str | None = None) -> dict[str, Any]:
         "ready_now": sum(
             1
             for i in issues
-            if i["status"] == "open"
+            if i.get("status") == "open"
             and not i.get("metadata", {}).get("claimed_by")
         ),
     }

@@ -1,7 +1,9 @@
 """Graph analytics for bead dependency DAG.
 
-Pure Python, zero external dependencies. Runs in RPC child process.
+Pure Python, zero external dependencies.
 Supports: PageRank, critical path, betweenness centrality, topological sort, cycle detection.
+
+Dependencies are objects: [{"id": "bd-xxx", "type": "blocks"}, ...]
 """
 
 from __future__ import annotations
@@ -14,9 +16,6 @@ def _build_adjacency(
     issues: list[dict[str, Any]],
 ) -> tuple[dict[str, list[str]], dict[str, list[str]], dict[str, float]]:
     """Build forward and reverse adjacency from bead dependencies.
-
-    Dependencies are stored as [{"id": "bd-xxx", "type": "blocks"}, ...]
-    Backward-compat: also handles legacy string format ["bd-xxx"].
 
     Returns (forward_edges, reverse_edges, node_weights) where:
     - forward_edges[id] = list of beads this bead blocks (outgoing)
@@ -31,19 +30,12 @@ def _build_adjacency(
 
     for issue in issues:
         iid = issue["id"]
-        # Weight: critical(0)=1.0, high(1)=0.5, medium(2)=0.33, low(3)=0.25, backlog(4)=0.2
         weights[iid] = 1.0 / (1.0 + issue.get("priority", 2))
 
         for dep in issue.get("dependencies", []):
-            # Normalize: handle both legacy string format and new object format
-            if isinstance(dep, str):
-                dep_id = dep
-            elif isinstance(dep, dict):
-                dep_id = dep.get("id", "")
-            else:
-                continue  # skip malformed
+            dep_id = dep.get("id", "")
             if dep_id in ids:
-                forward[dep_id].append(iid)  # dep blocks → issue gets unblocked
+                forward[dep_id].append(iid)
                 reverse[iid].append(dep_id)
 
     return forward, reverse, weights
@@ -53,11 +45,7 @@ def _topological_sort(
     forward: dict[str, list[str]],
     reverse: dict[str, list[str]],
 ) -> tuple[list[str], list[list[str]]]:
-    """Kahn's algorithm. Returns (sorted_order, cycles).
-
-    cycles is a list of cycle groups (lists of node IDs).
-    Returns empty cycles list if DAG is acyclic.
-    """
+    """Kahn's algorithm. Returns (sorted_order, cycles)."""
     in_degree = {node: len(rev) for node, rev in reverse.items()}
 
     queue = deque([node for node, deg in in_degree.items() if deg == 0])
@@ -71,11 +59,9 @@ def _topological_sort(
             if in_degree[neighbor] == 0:
                 queue.append(neighbor)
 
-    # Detect cycles
     remaining = [node for node, deg in in_degree.items() if deg > 0]
     cycles: list[list[str]] = []
     if remaining:
-        # Simple SCC detection for remaining nodes
         visited = set()
         for node in remaining:
             if node in visited:
@@ -105,7 +91,6 @@ def pagerank(
     """Compute PageRank for bead dependency graph.
 
     Higher score = this bead blocks more downstream work.
-    Use this for robot-next: pick the highest PageRank bead that is ready.
     """
     if not issues:
         return {}
@@ -115,7 +100,6 @@ def pagerank(
     if n == 0:
         return {}
 
-    # Initialize
     ranks = {node: 1.0 / n for node in forward}
     teleport = (1.0 - damping) / n
 
@@ -131,7 +115,7 @@ def pagerank(
                 if out_deg > 0:
                     rank_sum += ranks[src] / out_deg
                 else:
-                    rank_sum += ranks[src] / n  # dangling node
+                    rank_sum += ranks[src] / n
             new_rank = teleport + damping * rank_sum
             new_ranks[node] = new_rank
             max_diff = max(max_diff, abs(new_rank - ranks[node]))
@@ -146,11 +130,7 @@ def pagerank(
 def critical_path(
     issues: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Compute critical path — longest dependency chain determining minimum project time.
-
-    Uses topological sort + dynamic programming with priority-weighted costs.
-    Returns the critical path beads and total cost.
-    """
+    """Compute critical path — longest dependency chain."""
     if not issues:
         return {"path": [], "length": 0, "cost": 0.0}
 
@@ -166,7 +146,6 @@ def critical_path(
             "cycles": cycles,
         }
 
-    # Longest path DP
     dist: dict[str, float] = {node: weights[node] for node in order}
     prev: dict[str, str | None] = {node: None for node in order}
 
@@ -177,7 +156,6 @@ def critical_path(
                 dist[neighbor] = new_dist
                 prev[neighbor] = node
 
-    # Find end node
     if not dist:
         return {"path": [], "length": 0, "cost": 0.0}
 
@@ -189,7 +167,6 @@ def critical_path(
         current = prev[current]
     path.reverse()
 
-    # Lookup titles
     id_to_title = {i["id"]: i["title"] for i in issues}
     path_with_titles = [{"id": nid, "title": id_to_title.get(nid, nid)} for nid in path]
 
@@ -203,10 +180,7 @@ def critical_path(
 def betweenness_centrality(
     issues: list[dict[str, Any]],
 ) -> dict[str, float]:
-    """Compute betweenness centrality — nodes that sit on many shortest paths.
-
-    High betweenness = bottleneck bead that connects otherwise disconnected work.
-    """
+    """Compute betweenness centrality — bottleneck detection."""
     if not issues:
         return {}
 
@@ -217,7 +191,6 @@ def betweenness_centrality(
     centrality: dict[str, float] = {nid: 0.0 for nid in ids}
 
     for s in ids:
-        # BFS from source s
         stack: list[str] = []
         pred: dict[str, list[str]] = {nid: [] for nid in ids}
         sigma: dict[str, int] = {nid: 0 for nid in ids}
@@ -238,7 +211,6 @@ def betweenness_centrality(
                     sigma[w] += sigma[v]
                     pred[w].append(v)
 
-        # Back-propagation
         delta: dict[str, float] = {nid: 0.0 for nid in ids}
         while stack:
             w = stack.pop()
@@ -247,7 +219,6 @@ def betweenness_centrality(
             if w != s:
                 centrality[w] += delta[w]
 
-    # Normalize for directed graph
     norm = (n - 1) * (n - 2) if n > 2 else 1.0
     for nid in centrality:
         centrality[nid] /= norm
@@ -258,13 +229,7 @@ def betweenness_centrality(
 def beads_triage(project_root: str | None = None) -> dict[str, Any]:
     """Full triage: combine ready beads with graph analytics.
 
-    Returns:
-    - ready: actionable beads sorted by priority
-    - robot_next: the single best bead to work on (highest PageRank among ready)
-    - critical_path: longest dependency chain
-    - stats: summary counts
-    - cycles: any cyclic dependencies that need fixing
-    - bottlenecks: top 5 betweenness centrality beads
+    Returns robot_next, critical_path, bottlenecks, cycles, stats, ready_beads.
     """
     try:
         from .storage import _issues_path, _read_all, beads_ready
@@ -280,13 +245,11 @@ def beads_triage(project_root: str | None = None) -> dict[str, Any]:
     ready_result = beads_ready(project_root)
     ready = ready_result["beads"]
 
-    # Graph analytics
     pr = pagerank(issues)
     bc = betweenness_centrality(issues)
     cp = critical_path(issues)
     _, cycles_list = _topological_sort(*_build_adjacency(issues)[:2])
 
-    # Robot next: highest PageRank among ready beads
     robot_next = None
     if ready:
         ready_ranks = [(b, pr.get(b["id"], 0.0)) for b in ready]
@@ -300,7 +263,6 @@ def beads_triage(project_root: str | None = None) -> dict[str, Any]:
             "reason": "Highest PageRank among actionable beads — unblocks the most downstream work",
         }
 
-    # Top bottlenecks
     sorted_bc = sorted(bc.items(), key=lambda x: x[1], reverse=True)[:5]
     id_to_title = {i["id"]: i["title"] for i in issues}
     bottlenecks = [
@@ -322,5 +284,5 @@ def beads_triage(project_root: str | None = None) -> dict[str, Any]:
         "bottlenecks": bottlenecks,
         "cycles": [{"nodes": c} for c in cycles_list] if cycles_list else [],
         "stats": stats,
-        "ready_beads": ready[:10],  # top 10 by priority
+        "ready_beads": ready[:10],
     }
