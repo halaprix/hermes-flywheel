@@ -15,6 +15,9 @@ def _build_adjacency(
 ) -> tuple[dict[str, list[str]], dict[str, list[str]], dict[str, float]]:
     """Build forward and reverse adjacency from bead dependencies.
 
+    Dependencies are stored as [{"id": "bd-xxx", "type": "blocks"}, ...]
+    Backward-compat: also handles legacy string format ["bd-xxx"].
+
     Returns (forward_edges, reverse_edges, node_weights) where:
     - forward_edges[id] = list of beads this bead blocks (outgoing)
     - reverse_edges[id] = list of beads that block this bead (incoming)
@@ -32,9 +35,16 @@ def _build_adjacency(
         weights[iid] = 1.0 / (1.0 + issue.get("priority", 2))
 
         for dep in issue.get("dependencies", []):
-            if dep in ids:
-                forward[dep].append(iid)  # dep blocks → issue gets unblocked
-                reverse[iid].append(dep)
+            # Normalize: handle both legacy string format and new object format
+            if isinstance(dep, str):
+                dep_id = dep
+            elif isinstance(dep, dict):
+                dep_id = dep.get("id", "")
+            else:
+                continue  # skip malformed
+            if dep_id in ids:
+                forward[dep_id].append(iid)  # dep blocks → issue gets unblocked
+                reverse[iid].append(dep_id)
 
     return forward, reverse, weights
 

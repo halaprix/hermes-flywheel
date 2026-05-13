@@ -138,7 +138,7 @@ def formula_pour(
                 "id": step.get("id", f"step-{i}"),
                 "title": step_title,
                 "needs": step_deps,
-                "type": step.get("type", "task"),
+            "issue_type": step.get("issue_type", step.get("type", "task")),
             })
         return {
             "dry_run": True,
@@ -152,7 +152,7 @@ def formula_pour(
     # Create parent bead
     parent = _store.beads_create(
         title=title,
-        type_=formula.get("type", "epic"),
+        issue_type=formula.get("issue_type", formula.get("type", "epic")),
         priority=formula.get("priority", 1),
         description=description,
         project_root=project_root,
@@ -169,7 +169,7 @@ def formula_pour(
     for step in formula.get("steps", []):
         step_id = step.get("id", f"step-{len(children)}")
         step_title = _interpolate(step.get("title", step_id), vars_full)
-        step_type = step.get("type", "task")
+        step_type = step.get("issue_type", step.get("type", "task"))
         step_priority = step.get("priority", formula.get("priority", 2))
         step_desc = step.get("description", "")
 
@@ -182,7 +182,7 @@ def formula_pour(
 
         child = _store.beads_create(
             title=step_title,
-            type_=step_type,
+            issue_type=step_type,
             priority=step_priority,
             description=step_desc,
             project_root=project_root,
@@ -220,7 +220,7 @@ def formula_pour(
             "step_id": step_id,
             "bead_id": child_id,
             "title": step_title,
-            "type": step_type,
+            "issue_type": step_type,
             "dependencies": deps,
         })
 

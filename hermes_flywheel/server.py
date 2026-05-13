@@ -4,7 +4,7 @@
 A Flywheel-powered agentic workflow: Plan → Beads → Triage → Execute → Memory.
 
 Provides:
-  beads_create   — Create a new bead with hash ID
+  beads_create   — Create a new bead with hash ID (issue_type: bug/feature/task/epic/chore/docs/question)
   beads_update   — Update status, dependencies, metadata, claim
   beads_list     — List beads with optional filters
   beads_ready    — Return actionable (unblocked, unclaimed) beads
@@ -54,7 +54,7 @@ except ImportError:
 @mcp.tool()
 def beads_create(
     title: str,
-    type: str = "task",
+    issue_type: str = "task",
     priority: int = 2,
     description: str = "",
     project_root: str = "",
@@ -62,7 +62,7 @@ def beads_create(
     """Create a new bead (task) in the flywheel.
 
     Priority scale: 0=critical(security/bug), 1=high, 2=medium(default), 3=low, 4=backlog.
-    Types: bug, feature, task, epic, chore.
+    issue_type: bug, feature, task, epic, chore, docs, question.
     project_root: path to project directory (default: FLYWHEEL_PROJECT_ROOT env var or cwd)
 
     Returns the created bead with its hash ID (bd-xxxxxxxx).
@@ -70,7 +70,7 @@ def beads_create(
     pr = project_root or PROJECT_ROOT
     return _store.beads_create(
         title=title,
-        type_=type,
+        issue_type=issue_type,
         priority=priority,
         description=description,
         project_root=pr,
@@ -92,7 +92,8 @@ def beads_update(
     status: open, in_progress, blocked, closed, deferred
     claim: agent identifier to atomically reserve this bead (prevents duplicate work).
            When claim is set, status auto-changes to 'in_progress'.
-    dependencies: list of bead IDs that block this bead.
+           Uses file locking — if already claimed by another agent, returns error.
+    dependencies: list of bead IDs or dep objects that block this bead.
     project_root: path to project directory (default: FLYWHEEL_PROJECT_ROOT env var or cwd)
     """
     pr = project_root or PROJECT_ROOT
@@ -112,14 +113,14 @@ def beads_list(
     status: str | None = None,
     priority_min: int | None = None,
     priority_max: int | None = None,
-    type: str | None = None,
+    issue_type: str | None = None,
     project_root: str = "",
 ) -> dict:
     """List beads with optional filters.
 
     status: open, in_progress, blocked, closed, deferred
     priority_min/priority_max: filter by priority range
-    type: bug, feature, task, epic, chore
+    issue_type: bug, feature, task, epic, chore, docs, question
     project_root: path to project directory (default: FLYWHEEL_PROJECT_ROOT env var or cwd)
     """
     pr = project_root or PROJECT_ROOT
@@ -127,7 +128,7 @@ def beads_list(
         status=status,
         priority_min=priority_min,
         priority_max=priority_max,
-        type_=type,
+        issue_type=issue_type,
         project_root=pr,
     )
 
