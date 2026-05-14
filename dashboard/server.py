@@ -54,6 +54,19 @@ def discover_projects(scan_dirs: list[str]) -> list[dict]:
     return result
 
 
+def normalize_deps(beads: list[dict]) -> list[dict]:
+    """Convert object dependencies to string IDs for frontend compatibility."""
+    for b in beads:
+        deps = []
+        for dep in b.get("dependencies", []):
+            if isinstance(dep, dict):
+                deps.append(dep.get("id", str(dep)))
+            else:
+                deps.append(str(dep))
+        b["dependencies"] = deps
+    return beads
+
+
 def load_beads(beads_file: Path | None = None) -> list[dict]:
     path = beads_file or BEADS_FILE
     if not path.exists():
@@ -68,7 +81,7 @@ def load_beads(beads_file: Path | None = None) -> list[dict]:
                 beads.append(json.loads(line))
             except json.JSONDecodeError:
                 continue
-    return beads
+    return normalize_deps(beads)
 
 
 def beads_json(beads_file: Path | None = None) -> str:
