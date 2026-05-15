@@ -42,8 +42,12 @@ VALID_ISSUE_TYPES = frozenset({
 })
 
 BLOCKING_DEP_TYPES = frozenset({
-    "blocks", "parent-child", "waits-for", "conditional-blocks",
+    "blocks", "waits-for", "conditional-blocks",
 })
+# parent-child is intentionally NOT blocking — it's informational for
+# graph visualization (DAG layers). If it were blocking, epics/stories
+# would deadlock: children can't start until parent closes, but parent
+# can't close until children finish.
 
 ALL_DEP_TYPES = BLOCKING_DEP_TYPES | {
     "related", "discovered-from", "replies-to", "relates-to",
@@ -332,6 +336,32 @@ def beads_update(
 
         _validate_bead(target, all_ids=all_ids)
 
+        # ── Auto-close parent containers ──────────────────────────────
+        # When a bead is closed, check if all siblings are also closed.
+        # If so, auto-close the parent bead (story/epic).
+        if status == "closed":
+            for parent in issues:
+                if parent["id"] == target["id"]:
+                    continue
+                # Check if parent has a "parent-child" dep on this bead
+                for dep in parent.get("dependencies", []):
+                    if dep.get("type") == "parent-child" and dep.get("id") == target["id"]:
+                        # Found parent. Check if ALL its parent-child children are closed.
+                        all_children_closed = True
+                        for child_dep in parent.get("dependencies", []):
+                            if child_dep.get("type") != "parent-child":
+                                continue
+                            child_id = child_dep.get("id", "")
+                            child = next((i for i in issues if i["id"] == child_id), None)
+                            if child and child["status"] != "closed":
+                                all_children_closed = False
+                                break
+                        if all_children_closed and parent["status"] not in ("closed",):
+                            parent["status"] = "closed"
+                            parent["updated_at"] = time.strftime(
+                                "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                            )
+
         lines = [json.dumps(i, ensure_ascii=False) for i in issues]
         _atomic_write(path, lines)
 
@@ -453,6 +483,26 @@ def beads_stats(project_root: str | None = None) -> dict[str, Any]:
         if issue.get("metadata", {}).get("claimed_by"):
             claimed += 1
 
+    # Count truly ready beads (not just open+unclaimed)
+    ready_count = 0
+    for issue in issues:
+        if issue.get("status") != "open":
+            continue
+        if issue.get("metadata", {}).get("claimed_by"):
+            continue
+        # Check if any blocking dep is unclosed
+        blocked = False
+        for dep in issue.get("dependencies", []):
+            if dep.get("type", "blocks") not in BLOCKING_DEP_TYPES:
+                continue
+            dep_id = dep.get("id", "")
+            dep_issue = next((i for i in issues if i["id"] == dep_id), None)
+            if dep_issue and dep_issue["status"] != "closed":
+                blocked = True
+                break
+        if not blocked:
+            ready_count += 1
+
     return {
         "total": len(issues),
         "by_status": by_status,
@@ -460,10 +510,5 @@ def beads_stats(project_root: str | None = None) -> dict[str, Any]:
         "by_issue_type": by_type,
         "total_dependencies": total_deps,
         "claimed": claimed,
-        "ready_now": sum(
-            1
-            for i in issues
-            if i.get("status") == "open"
-            and not i.get("metadata", {}).get("claimed_by")
-        ),
+        "ready_now": ready_count,
     }
