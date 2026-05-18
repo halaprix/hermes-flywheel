@@ -170,6 +170,44 @@ git log --oneline -5
 
 ---
 
+## Semantic Versioning
+
+This project follows **Semantic Versioning 2.0.0** (`MAJOR.MINOR.PATCH`).
+
+### Version Bump Rules
+
+| Change Type | Bump | Rationale |
+|-------------|------|-----------|
+| Bug fix (no API change) | **PATCH** (0.5.0 → 0.5.1) | Backward-compatible fixes |
+| New feature, backward-compatible | **MINOR** (0.5.0 → 0.6.0) | Added functionality, no breakage |
+| Breaking API change | **MAJOR** (0.5.0 → 1.0.0) | Removes or renames tools, changes data format |
+
+### Pre-1.0.0 Rules
+
+While in `0.x.y`:
+- Anything CAN change — the API is unstable
+- **PATCH bumps for fixes** (0.5.0 → 0.5.1)
+- **MINOR bumps for any new behavior** (0.5.0 → 0.6.0), even if technically breaking
+- **MAJOR bump to 1.0.0** when the CLI interface stabilizes and we commit to backward compatibility
+
+### Commit Convention
+
+All commits follow [Conventional Commits](https://www.conventionalcommits.org/):
+```
+feat: add bd triage command
+fix: handle missing dependencies in graph
+docs: update installation instructions
+chore: bump version to 0.5.0
+```
+
+### Version Files
+
+- `pyproject.toml` — Python package version
+- `SKILL.md` frontmatter `version:` field — flywheel methodology version
+- `bd --version` — gastownhall/beads CLI version (handled upstream)
+
+---
+
 ## Where to Contribute
 
 Given the maintenance mode status, the most valuable contributions are:

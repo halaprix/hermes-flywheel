@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hermes-flywheel"
-version = "0.1.0"
+version = "0.5.0"
 description = "Lightweight beads task-graph MCP server for Hermes Agent — reverse-engineered from the Agentic Coding Flywheel"
 readme = "README.md"
 license = "MIT"
